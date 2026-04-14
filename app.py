@@ -71,7 +71,7 @@ def get_clients():
             key=st.secrets["SUPABASE_KEY"],
         )
     except Exception:
-        supabase = None   # logging disabled if Supabase not configured yet
+        supabase = None
 
     return primary, escalation, supabase
 
@@ -92,7 +92,7 @@ def plan_to_text(p: LessonPlan) -> str:
     ])
 
 
-def get_chapter_index(topic: str, chapters: list, subject: str) -> int | None:
+def get_chapter_index(topic: str, chapters: list, subject: str):
     if subject in LANGUAGE_SUBJECTS or not chapters:
         return None
     try:
@@ -101,7 +101,22 @@ def get_chapter_index(topic: str, chapters: list, subject: str) -> int | None:
         return None
 
 
-# ── UI ────────────────────────────────────────────────────────────────────────
+# ── Initialise session state ──────────────────────────────────────────────────
+# These persist across Streamlit reruns so the plan survives field edits.
+
+if "current_plan" not in st.session_state:
+    st.session_state.current_plan = None
+if "current_session_id" not in st.session_state:
+    st.session_state.current_session_id = None
+if "current_usage" not in st.session_state:
+    st.session_state.current_usage = None
+if "current_model_id" not in st.session_state:
+    st.session_state.current_model_id = None
+if "original_field_values" not in st.session_state:
+    st.session_state.original_field_values = {}
+
+
+# ── UI — inputs ───────────────────────────────────────────────────────────────
 
 st.markdown("## 📚 ShikshaAI")
 st.markdown("**CBSE Lesson Plan Generator** · NCERT-aligned · NEP 2020 · Indian classroom defaults")
@@ -149,7 +164,6 @@ if go:
     else:
         primary, escalation, supabase = get_clients()
 
-        # Build the prompt sent string for logging (before generation)
         prompt_sent = build_user_message(
             grade=grade,
             subject=subject,
@@ -164,7 +178,6 @@ if go:
             usage = None
             model_id_used = None
             error_message = None
-            raw_output = ""
 
             try:
                 plan, usage, model_id_used = generate_with_recovery(
@@ -186,7 +199,7 @@ if go:
                 error_message = f"Unexpected error: {e}"
                 st.error("Something went wrong. Please try again.")
 
-        # ── Log session to Supabase ───────────────────────────────────────────
+        # ── Log session ───────────────────────────────────────────────────────
         session_id = None
         if supabase:
             session_id = log_session(
@@ -200,142 +213,150 @@ if go:
                 model_id=model_id_used or "unknown",
                 usage=usage or LLMUsage(0, 0),
                 prompt_sent=prompt_sent,
-                raw_model_output=raw_output,
+                raw_model_output="",
                 parsed_successfully=plan is not None,
                 plan=plan,
                 error_message=error_message,
             )
 
-        # ── Render output ─────────────────────────────────────────────────────
+        # ── Persist to session_state so plan survives reruns ──────────────────
         if plan:
-            st.markdown(f"### {plan.topic}")
-            meta_parts = [
-                plan.ncert_ref,
-                f"Grade {plan.grade} {plan.subject}",
-                f"{plan.duration_min} min",
-                f"{plan.class_size} students",
-                plan.nep_competency,
-            ]
-            st.caption(" · ".join(p for p in meta_parts if p))
-            st.markdown('<span class="badge">CBSE ready</span>', unsafe_allow_html=True)
+            st.session_state.current_plan = plan
+            st.session_state.current_session_id = session_id
+            st.session_state.current_usage = usage
+            st.session_state.current_model_id = model_id_used
 
-            # ── Editable output fields (Decision 8) ──────────────────────────
-            # Each field is editable. Changes are logged silently to feedback table.
-            # session_id links edits back to the generation that produced them.
+            # Store original field values for edit detection on rerun
+            st.session_state.original_field_values = {
+                "learning_objectives": "\n".join(plan.learning_objectives),
+                "warm_up_activity": plan.warm_up_activity,
+                "main_activity": plan.main_activity,
+                "assessment_question": plan.assessment_question,
+                "homework": plan.homework,
+            }
 
-            st.markdown('<div class="sec-label">Learning objectives</div>', unsafe_allow_html=True)
-            original_objectives = "\n".join(plan.learning_objectives)
-            edited_objectives = st.text_area(
-                "learning_objectives",
-                value=original_objectives,
-                height=100,
-                label_visibility="collapsed",
-                key="edit_objectives",
+
+# ── Render output ─────────────────────────────────────────────────────────────
+# Runs on every rerun — not just when button is clicked.
+# This keeps the plan visible while the teacher edits fields.
+
+if st.session_state.current_plan:
+    plan          = st.session_state.current_plan
+    session_id    = st.session_state.current_session_id
+    usage         = st.session_state.current_usage
+    model_id_used = st.session_state.current_model_id
+    originals     = st.session_state.original_field_values
+
+    _, _, supabase = get_clients()
+
+    st.markdown(f"### {plan.topic}")
+    meta_parts = [
+        plan.ncert_ref,
+        f"Grade {plan.grade} {plan.subject}",
+        f"{plan.duration_min} min",
+        f"{plan.class_size} students",
+        plan.nep_competency,
+    ]
+    st.caption(" · ".join(p for p in meta_parts if p))
+    st.markdown('<span class="badge">CBSE ready</span>', unsafe_allow_html=True)
+
+    # ── Editable fields ───────────────────────────────────────────────────────
+
+    st.markdown('<div class="sec-label">Learning objectives</div>', unsafe_allow_html=True)
+    edited_objectives = st.text_area(
+        "learning_objectives",
+        value=originals["learning_objectives"],
+        height=100,
+        label_visibility="collapsed",
+        key="edit_objectives",
+    )
+
+    editable_fields = [
+        ("Warm-up activity (5 min)", "warm_up_activity",   plan.warm_up_activity,    80),
+        ("Main activity",            "main_activity",       plan.main_activity,       120),
+        ("Assessment question",      "assessment_question", plan.assessment_question, 68),
+        ("Homework",                 "homework",            plan.homework,            68),
+    ]
+
+    for label, key, _, height in editable_fields:
+        st.markdown(f'<div class="sec-label">{label}</div>', unsafe_allow_html=True)
+        st.text_area(
+            key,
+            value=originals[key],
+            height=height,
+            label_visibility="collapsed",
+            key=f"edit_{key}",
+        )
+        st.markdown("")
+
+    # ── Log edits silently ────────────────────────────────────────────────────
+    # Compares current widget values against originals on every rerun.
+    # A changed field writes one feedback row to Supabase.
+
+    if supabase and session_id:
+        if edited_objectives != originals["learning_objectives"]:
+            log_feedback_edit(
+                supabase,
+                session_id=session_id,
+                field_edited="learning_objectives",
+                original_value=originals["learning_objectives"],
+                edited_value=edited_objectives,
             )
 
-            editable_fields = [
-                ("Warm-up activity (5 min)", "warm_up_activity", plan.warm_up_activity, 80),
-                ("Main activity",            "main_activity",     plan.main_activity,    120),
-                ("Assessment question",      "assessment_question", plan.assessment_question, 68),
-                ("Homework",                 "homework",          plan.homework,          68),
-            ]
-
-            edit_start_times = {}
-            edited_values = {}
-
-            for label, key, original, height in editable_fields:
-                st.markdown(f'<div class="sec-label">{label}</div>', unsafe_allow_html=True)
-                edit_start_times[key] = time.time()
-                edited_values[key] = st.text_area(
-                    key,
-                    value=original,
-                    height=height,
-                    label_visibility="collapsed",
-                    key=f"edit_{key}",
+        for _, key, _, _ in editable_fields:
+            current_value  = st.session_state.get(f"edit_{key}", "")
+            original_value = originals.get(key, "")
+            if current_value != original_value:
+                log_feedback_edit(
+                    supabase,
+                    session_id=session_id,
+                    field_edited=key,
+                    original_value=original_value,
+                    edited_value=current_value,
                 )
-                st.markdown("")
 
-            # ── Log edits silently via session_state ─────────────────────────
-            # Store originals in session_state on first render of this session
-            state_key = f"originals_{session_id}"
-            if state_key not in st.session_state:
-                st.session_state[state_key] = {
-                    "learning_objectives": original_objectives,
-                    "warm_up_activity": plan.warm_up_activity,
-                    "main_activity": plan.main_activity,
-                    "assessment_question": plan.assessment_question,
-                    "homework": plan.homework,
-                }
-
-            originals = st.session_state[state_key]
-
+    # ── Rating buttons ────────────────────────────────────────────────────────
+    st.divider()
+    r1, r2 = st.columns(2)
+    with r1:
+        if st.button("👍  Looks good", use_container_width=True):
             if supabase and session_id:
-                if edited_objectives != originals["learning_objectives"]:
-                    log_feedback_edit(
-                        supabase,
-                        session_id=session_id,
-                        field_edited="learning_objectives",
-                        original_value=originals["learning_objectives"],
-                        edited_value=edited_objectives,
-                    )
+                log_feedback_rating(supabase, session_id=session_id, rating=1)
+            st.success("Thanks! Feedback saved.")
+    with r2:
+        if st.button("👎  Needs work", use_container_width=True):
+            if supabase and session_id:
+                log_feedback_rating(supabase, session_id=session_id, rating=0)
+            st.warning("Got it. We'll use this to improve.")
 
-                for _, key, _, _ in editable_fields:
-                    edited = st.session_state.get(f"edit_{key}", "")
-                    original = originals.get(key, "")
-                    if edited != original:
-                        log_feedback_edit(
-                            supabase,
-                            session_id=session_id,
-                            field_edited=key,
-                            original_value=original,
-                            edited_value=edited,
-                            time_to_edit_seconds=round(
-                                time.time() - edit_start_times[key], 1
-                            ),
-                        )
+    # ── Download + share ──────────────────────────────────────────────────────
+    plain = plan_to_text(plan)
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button(
+            "Download as .txt", plain,
+            file_name=f"lesson_{plan.topic[:20].replace(' ', '_')}.txt",
+            use_container_width=True,
+        )
+    with c2:
+        st.link_button(
+            "Share on WhatsApp",
+            f"https://wa.me/?text={plain[:1000]}",
+            use_container_width=True,
+        )
 
-            # ── Rating buttons ────────────────────────────────────────────────
-            st.divider()
-            r1, r2 = st.columns(2)
-            with r1:
-                if st.button("👍  Looks good", use_container_width=True):
-                    if supabase and session_id:
-                        log_feedback_rating(supabase, session_id=session_id, rating=1)
-                    st.success("Thanks! Feedback saved.")
-            with r2:
-                if st.button("👎  Needs work", use_container_width=True):
-                    if supabase and session_id:
-                        log_feedback_rating(supabase, session_id=session_id, rating=0)
-                    st.warning("Got it. We'll use this to improve.")
+    # ── Cost note ─────────────────────────────────────────────────────────────
+    if usage:
+        cache_note = f" · {usage.cache_read_tokens} cached" if usage.cache_read_tokens else ""
+        st.markdown(
+            f'<div class="cost-note">'
+            f'Tokens: {usage.input_tokens} in + {usage.output_tokens} out{cache_note} · '
+            f'Est. cost: ${usage.estimated_cost_usd:.5f} · '
+            f'Model: {model_id_used}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
-            # ── Download + share ──────────────────────────────────────────────
-            plain = plan_to_text(plan)
-            st.divider()
-            c1, c2 = st.columns(2)
-            with c1:
-                st.download_button(
-                    "Download as .txt", plain,
-                    file_name=f"lesson_{topic[:20].replace(' ', '_')}.txt",
-                    use_container_width=True,
-                )
-            with c2:
-                st.link_button(
-                    "Share on WhatsApp",
-                    f"https://wa.me/?text={plain[:1000]}",
-                    use_container_width=True,
-                )
-
-            # ── Cost note ─────────────────────────────────────────────────────
-            if usage:
-                cache_note = f" · {usage.cache_read_tokens} cached" if usage.cache_read_tokens else ""
-                st.markdown(
-                    f'<div class="cost-note">'
-                    f'Tokens: {usage.input_tokens} in + {usage.output_tokens} out{cache_note} · '
-                    f'Est. cost: ${usage.estimated_cost_usd:.5f} · '
-                    f'Model: {model_id_used}'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-            with st.expander("View raw JSON"):
-                st.json(to_dict(plan))
+    with st.expander("View raw JSON"):
+        st.json(to_dict(plan))
