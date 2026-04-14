@@ -255,21 +255,33 @@ if go:
                 )
                 st.markdown("")
 
-            # ── Log edits silently ────────────────────────────────────────────
+            # ── Log edits silently via session_state ─────────────────────────
+            # Store originals in session_state on first render of this session
+            state_key = f"originals_{session_id}"
+            if state_key not in st.session_state:
+                st.session_state[state_key] = {
+                    "learning_objectives": original_objectives,
+                    "warm_up_activity": plan.warm_up_activity,
+                    "main_activity": plan.main_activity,
+                    "assessment_question": plan.assessment_question,
+                    "homework": plan.homework,
+                }
+
+            originals = st.session_state[state_key]
+
             if supabase and session_id:
-                # Learning objectives
-                if edited_objectives != original_objectives:
+                if edited_objectives != originals["learning_objectives"]:
                     log_feedback_edit(
                         supabase,
                         session_id=session_id,
                         field_edited="learning_objectives",
-                        original_value=original_objectives,
+                        original_value=originals["learning_objectives"],
                         edited_value=edited_objectives,
                     )
 
-                # All other editable fields
-                for _, key, original, _ in editable_fields:
-                    edited = edited_values.get(key, original)
+                for _, key, _, _ in editable_fields:
+                    edited = st.session_state.get(f"edit_{key}", "")
+                    original = originals.get(key, "")
                     if edited != original:
                         log_feedback_edit(
                             supabase,
@@ -277,7 +289,9 @@ if go:
                             field_edited=key,
                             original_value=original,
                             edited_value=edited,
-                            time_to_edit_seconds=round(time.time() - edit_start_times[key], 1),
+                            time_to_edit_seconds=round(
+                                time.time() - edit_start_times[key], 1
+                            ),
                         )
 
             # ── Rating buttons ────────────────────────────────────────────────
