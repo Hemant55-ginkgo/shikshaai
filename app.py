@@ -266,12 +266,13 @@ if st.session_state.current_plan:
     # ── Editable fields ───────────────────────────────────────────────────────
 
     st.markdown('<div class="sec-label">Learning objectives</div>', unsafe_allow_html=True)
+    v = st.session_state.plan_version
     edited_objectives = st.text_area(
         "learning_objectives",
         value=originals["learning_objectives"],
         height=100,
         label_visibility="collapsed",
-        key="edit_objectives",
+        key=f"edit_objectives_{v}",
     )
 
     editable_fields = [
@@ -288,7 +289,7 @@ if st.session_state.current_plan:
             value=originals[key],
             height=height,
             label_visibility="collapsed",
-            key=f"edit_{key}",
+            key=f"edit_{key}_{v}",
         )
         st.markdown("")
 
@@ -307,7 +308,7 @@ if st.session_state.current_plan:
             )
 
         for _, key, _, _ in editable_fields:
-            current_value  = st.session_state.get(f"edit_{key}", "")
+            current_value  = st.session_state.get(f"edit_{key}_{v}", "")
             original_value = originals.get(key, "")
             if current_value != original_value:
                 log_feedback_edit(
