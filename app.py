@@ -22,6 +22,7 @@ from data.logger import (
 )
 from contract.schema import LessonPlan, to_dict
 from contract.prompts import build_user_message, get_system_prompt
+from llm_service.base import LLMUsage
 from llm_service.factory import get_primary_brain, get_escalation_brain
 from llm_service.validator import generate_with_recovery, GenerationError
 
@@ -197,7 +198,7 @@ if go:
                 class_size=int(class_size),
                 chapter_index=get_chapter_index(topic, chapters, subject),
                 model_id=model_id_used or "unknown",
-                usage=usage or __import__('llm_service.base', fromlist=['LLMUsage']).LLMUsage(0, 0),
+                usage=usage or LLMUsage(0, 0),
                 prompt_sent=prompt_sent,
                 raw_model_output=raw_output,
                 parsed_successfully=plan is not None,
