@@ -6,6 +6,10 @@
 # Nothing in app.py knows which model class is being used.
 # Switching MODEL_BACKEND in config.py is the only change needed to swap brains.
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import config
 from llm_service.base import BaseLLM
 
