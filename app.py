@@ -114,6 +114,8 @@ if "current_model_id" not in st.session_state:
     st.session_state.current_model_id = None
 if "original_field_values" not in st.session_state:
     st.session_state.original_field_values = {}
+if "plan_version" not in st.session_state:
+    st.session_state.plan_version = 0
 
 
 # ── UI — inputs ───────────────────────────────────────────────────────────────
@@ -221,6 +223,7 @@ if go:
 
         # ── Persist to session_state so plan survives reruns ──────────────────
         if plan:
+            st.session_state.plan_version += 1   # ← forces widget keys to change
             st.session_state.current_plan = plan
             st.session_state.current_session_id = session_id
             st.session_state.current_usage = usage
